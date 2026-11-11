@@ -84,7 +84,6 @@ public final class SettingsScreen extends Screen {
 		minimap.toggle("auto_caves", () -> s.autoCaves, v -> s.autoCaves = v, ServerRules.caveMapsAllowed() ? null : false);
 		minimap.toggle("prefer_surface", () -> s.preferSurface, v -> s.preferSurface = v);
 		minimap.toggle("legible_caves", () -> s.legibleCaves, v -> s.legibleCaves = v);
-		minimap.toggle("enlarge_toggle", () -> s.minimapEnlargeToggle, v -> s.minimapEnlargeToggle = v);
 		minimap.open("position", MinimapPositionScreen.placeName(), () -> this.minecraft.gui.setScreen(new MinimapPositionScreen(this)));
 		minimap.choice("game_time", Settings.GameTime.values(), () -> s.gameTime, v -> s.gameTime = v);
 		// Beside Position, so the tab doesn't grow.
@@ -92,17 +91,24 @@ public final class SettingsScreen extends Screen {
 		int sizes = (Settings.MAX_SIZE - Settings.MIN_SIZE) / Settings.SIZE_STEP + 1;
 		minimap.slider("size", (s.minimapSize - Settings.MIN_SIZE) / Settings.SIZE_STEP, sizes,
 			i -> s.minimapSize = Settings.MIN_SIZE + i * Settings.SIZE_STEP, i -> Component.literal(Integer.toString(Settings.MIN_SIZE + i * Settings.SIZE_STEP)));
-		int enlargedSizes = (Settings.MAX_ENLARGED - Settings.MIN_ENLARGED) / Settings.ENLARGED_STEP + 1;
-		minimap.slider("enlarged", (s.minimapEnlarged - Settings.MIN_ENLARGED) / Settings.ENLARGED_STEP, enlargedSizes,
-			i -> s.minimapEnlarged = Settings.MIN_ENLARGED + i * Settings.ENLARGED_STEP,
-			i -> Component.literal(java.math.BigDecimal.valueOf(Settings.MIN_ENLARGED + i * Settings.ENLARGED_STEP, 2).stripTrailingZeros().toPlainString() + "×"));
-		// Beside Size, so the tab doesn't grow.
-		minimap.lastTwoSideBySide();
 		minimap.slider("zoom", s.zoomStep(), Settings.ZOOMS.length, s::zoomStep, i -> Component.literal(Settings.ZOOMS[i] + "×"));
 		int opacities = (Settings.MAX_OPACITY - Settings.MIN_OPACITY) / Settings.OPACITY_STEP + 1;
 		minimap.slider("opacity", (Settings.snapOpacity(s.minimapOpacity) - Settings.MIN_OPACITY) / Settings.OPACITY_STEP, opacities,
 			i -> s.minimapOpacity = Settings.MIN_OPACITY + i * Settings.OPACITY_STEP, i -> Component.literal((Settings.MIN_OPACITY + i * Settings.OPACITY_STEP) + "%"));
-		// Beside Zoom, so the tab doesn't grow: it has no room for another row on a small screen.
+		// Beside Zoom, leaving room for the paired text and height-arrow controls.
+		minimap.lastTwoSideBySide();
+		int[] textSizes = Pins.sizes();
+		minimap.slider("minimap_text_scale", nearestIndex(textSizes, s.minimapTextScale), textSizes.length,
+			i -> s.minimapTextScale = textSizes[i], i -> Component.literal(textSizes[i] + "%"));
+		int[] arrowSizes = heightArrowSizes();
+		minimap.slider("minimap_height_arrow_scale", nearestIndex(arrowSizes, s.minimapHeightArrowScale), arrowSizes.length,
+			i -> s.minimapHeightArrowScale = arrowSizes[i],
+			i -> arrowSizes[i] == 0 ? Component.translatable("options.off") : Component.literal(arrowSizes[i] + "%"));
+		minimap.lastTwoSideBySide();
+		minimap.slider("corner_minimap_size", (s.cornerMinimapSize - 50) / 10, 16,
+			i -> s.cornerMinimapSize = 50 + i * 10, i -> Component.literal((50 + i * 10) + "%"));
+		minimap.slider("expanded_minimap_size", (s.expandedMinimapSize - 50) / 5, 11,
+			i -> s.expandedMinimapSize = 50 + i * 5, i -> Component.literal((50 + i * 5) + "%"));
 		minimap.lastTwoSideBySide();
 		// Side by side, so the tab stays short enough for a small screen.
 		minimap.choice("shape", Settings.Shape.values(), () -> s.minimapShape, v -> s.minimapShape = v);
@@ -161,8 +167,10 @@ public final class SettingsScreen extends Screen {
 		waypoints.heading("waypoint_size");
 		waypoints.slider("waypoint_size_minimap", nearestIndex(pinSizes, s.waypointMinimapSize), pinSizes.length, i -> s.waypointMinimapSize = pinSizes[i], i -> Component.literal(pinSizes[i] + "%"));
 		waypoints.slider("waypoint_size_map", nearestIndex(pinSizes, s.waypointMapSize), pinSizes.length, i -> s.waypointMapSize = pinSizes[i], i -> Component.literal(pinSizes[i] + "%"));
+		waypoints.lastTwoSideBySide();
 		waypoints.slider("waypoint_size_world", nearestIndex(pinSizes, s.waypointWorldSize), pinSizes.length, i -> s.waypointWorldSize = pinSizes[i], i -> Component.literal(pinSizes[i] + "%"));
-		waypoints.lastThreeSideBySide();
+		waypoints.slider("waypoint_text_size_world", nearestIndex(pinSizes, s.waypointWorldTextSize), pinSizes.length, i -> s.waypointWorldTextSize = pinSizes[i], i -> Component.literal(pinSizes[i] + "%"));
+		waypoints.lastTwoSideBySide();
 		waypoints.open("teleport_command", Component.literal("/" + s.teleportCommand), () -> this.minecraft.gui.setScreen(new TeleportCommandScreen(this)));
 
 		SettingsTab look = new SettingsTab("diorama.settings.look");
@@ -366,13 +374,13 @@ public final class SettingsScreen extends Screen {
 			int checkRows = (this.checkboxes.size() + 1) / 2;
 			// On a small window, closer together rather than into the buttons below.
 			boolean tight = 22 + checkRows * 22 + rows * 24 + this.headings.size() * HEADING > area.height();
-			int rowStep = tight ? 22 : 24;
+			int rowStep = tight ? 18 : 24;
 			int y = area.top() + (tight ? 6 : 12);
 			for (int i = 0; i < this.checkboxes.size(); i++) {
-				this.checkboxes.get(i).setPosition(left + (i % 2) * (column + COLUMN_GAP), y + (i / 2) * (tight ? 20 : 22));
+				placeWidget(this.checkboxes.get(i), left + (i % 2) * (column + COLUMN_GAP), y + (i / 2) * (tight ? 18 : 22), tight ? 18 : 20);
 			}
 			if (!this.checkboxes.isEmpty()) {
-				y += checkRows * (tight ? 20 : 22) + (tight ? 3 : 10);
+				y += checkRows * (tight ? 18 : 22) + (tight ? 3 : 10);
 			}
 			for (int i = 0; i < this.wide.size(); i++) {
 				AbstractWidget widget = this.wide.get(i);
@@ -386,23 +394,29 @@ public final class SettingsScreen extends Screen {
 					int third = (content - 8) / 3;
 					for (int j = 0; j < 3; j++) {
 						AbstractWidget part = this.wide.get(i + j);
-						part.setPosition(left + j * (content - third) / 2, y);
+						placeWidget(part, left + j * (content - third) / 2, y, tight ? 18 : 20);
 						part.setWidth(third);
 					}
 					i += 2;
 				} else if (this.pairedWithNext.contains(widget) && i + 1 < this.wide.size()) {
 					int half = (content - 4) / 2;
-					widget.setPosition(left, y);
+					placeWidget(widget, left, y, tight ? 18 : 20);
 					widget.setWidth(half);
 					AbstractWidget next = this.wide.get(++i);
-					next.setPosition(left + content - half, y);
+					placeWidget(next, left + content - half, y, tight ? 18 : 20);
 					next.setWidth(half);
 				} else {
-					widget.setPosition(left, y);
+					placeWidget(widget, left, y, tight ? 18 : 20);
 					widget.setWidth(content);
 				}
 				y += rowStep;
 			}
+		}
+
+		/** Keep short-window controls inside their rows, and restore normal heights after resizing. */
+		private static void placeWidget(AbstractWidget widget, int x, int y, int height) {
+			widget.setHeight(height);
+			widget.setPosition(x, y);
 		}
 	}
 
@@ -459,6 +473,14 @@ public final class SettingsScreen extends Screen {
 
 	private static Component label(Component name, Component value) {
 		return Component.empty().append(name).append(": ").append(value);
+	}
+
+	/** Height arrows also offer zero, to hide them without changing the radar icons. */
+	private static int[] heightArrowSizes() {
+		int[] sizes = Pins.sizes();
+		int[] values = new int[sizes.length + 1];
+		System.arraycopy(sizes, 0, values, 1, sizes.length);
+		return values;
 	}
 
 	/** Where in {@code values}, ascending, the one nearest {@code value} is; halfway rounds up, as {@code Pins.scale} does. */

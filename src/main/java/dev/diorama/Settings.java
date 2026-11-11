@@ -75,6 +75,10 @@ public final class Settings {
 	public boolean minimapCentered = false;
 	/** The minimap's size while the enlarge key is held, in percent of {@link #minimapSize}. */
 	public int minimapEnlarged = 200;
+	/** The large centered HUD map's size, as a percentage of the usable viewport. */
+	public int expandedMinimapSize = 90;
+	/** The expanded corner map's size, as a percentage of its base screen-relative size. */
+	public int cornerMinimapSize = 100;
 	/** The enlarge key switches the enlarged size on and off instead of being held (Xaero's "Toggled Enlarged Minimap"). */
 	public boolean minimapEnlargeToggle = false;
 	/** One of {@link #ZOOMS}. Saved as the value, so adding a step doesn't move anyone's zoom. */
@@ -83,6 +87,10 @@ public final class Settings {
 	private @Nullable Integer minimapZoom;
 	/** How opaque the minimap's map is, in percent. Files from before this setting leave it at 100. */
 	public int minimapOpacity = MAX_OPACITY;
+	/** Font size of the coordinates, biome and time below the minimap, in percent. */
+	public int minimapTextScale = 100;
+	/** Above/below radar arrows on the minimap, in percent; zero hides them. */
+	public int minimapHeightArrowScale = 100;
 	public boolean compass = true;
 	public boolean coordinates = true;
 	public boolean biome = true;
@@ -144,6 +152,8 @@ public final class Settings {
 	public int waypointMinimapSize = 60;
 	public int waypointMapSize = 60;
 	public int waypointWorldSize = 60;
+	/** World labels' font size, independent of the pin size, in percent. */
+	public int waypointWorldTextSize = 60;
 	/** The Waypoints and Settings buttons on the map. A modpack can hide them; their keys still open both. */
 	public boolean mapWaypointsButton = true;
 	public boolean mapSettingsButton = true;
@@ -435,12 +445,17 @@ public final class Settings {
 		settings.zoomStep(settings.zoomStep());
 		settings.minimapSize = snapSize(settings.minimapSize);
 		settings.minimapOpacity = snapOpacity(settings.minimapOpacity);
+		settings.minimapTextScale = clampWaypointSize(settings.minimapTextScale);
+		settings.minimapHeightArrowScale = Math.max(0, Math.min(MAX_SCALE, settings.minimapHeightArrowScale));
 		settings.minimapEnlarged = snapEnlarged(settings.minimapEnlarged);
+		settings.expandedMinimapSize = Math.max(50, Math.min(100, settings.expandedMinimapSize));
+		settings.cornerMinimapSize = Math.max(50, Math.min(MAX_SCALE, settings.cornerMinimapSize));
 		settings.radarRange = nearest(RANGES, settings.radarRange);
 		settings.waypointDistance = nearest(WAYPOINT_DISTANCES, settings.waypointDistance);
 		settings.waypointMinimapSize = clampWaypointSize(settings.waypointMinimapSize);
 		settings.waypointMapSize = clampWaypointSize(settings.waypointMapSize);
 		settings.waypointWorldSize = clampWaypointSize(settings.waypointWorldSize);
+		settings.waypointWorldTextSize = clampWaypointSize(settings.waypointWorldTextSize);
 		settings.apply();
 		// Written now, so the file says it moved even if the player never changes a setting. One that
 		// couldn't be read stays as it is, for the player to mend.

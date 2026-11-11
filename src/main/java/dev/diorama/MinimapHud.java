@@ -6,6 +6,7 @@ import dev.diorama.render.Circle;
 import dev.diorama.render.MapLevel;
 import dev.diorama.render.MapViewport;
 import dev.diorama.render.MinimapFrames;
+import dev.diorama.render.Pins;
 import dev.diorama.drawing.DrawingOverlay;
 import dev.diorama.drawing.DrawingStore;
 import dev.diorama.render.Markers;
@@ -115,8 +116,9 @@ public final class MinimapHud implements HudElement {
 			return;
 		}
 		// The enlarge key shows it bigger, growing away from the edges it's placed by.
-		int size = DioramaClient.minimapEnlarged() ? Math.round(settings.minimapSize * settings.minimapEnlarged / 100.0F) : settings.minimapSize;
-		int[] bounds = this.draw(graphics, partialTick, Anchor.of(settings), effectIcons ? effectCounts(mc.player) : NO_EFFECTS, size);
+		int size = settings.minimapSize;
+		int mode = DioramaClient.largeMapHeld() ? 2 : DioramaClient.minimapEnlarged() ? 1 : 0;
+		int[] bounds = this.draw(graphics, partialTick, Anchor.of(settings), effectIcons ? effectCounts(mc.player) : NO_EFFECTS, size, mode);
 		shown = new int[] {bounds[4], bounds[5], bounds[6], bounds[7]};
 	}
 
@@ -210,6 +212,11 @@ public final class MinimapHud implements HudElement {
 	 * size, and its height with the lines under it.
 	 */
 	private int[] draw(GuiGraphicsExtractor graphics, float partialTick, Anchor anchor, int[] effects, int wanted) {
+		return this.draw(graphics, partialTick, anchor, effects, wanted, 0);
+	}
+
+	/** Expanded mode changes the viewport's dimensions, so blocks and icons retain their proportions. */
+	private int[] draw(GuiGraphicsExtractor graphics, float partialTick, Anchor anchor, int[] effects, int wanted, int mode) {
 		Minecraft mc = Minecraft.getInstance();
 		MapSession session = MapSession.get();
 		Entity viewer = MapSession.viewer();
@@ -217,27 +224,32 @@ public final class MinimapHud implements HudElement {
 		Vec3 pos = viewer.getPosition(partialTick);
 		Font font = mc.font;
 		List<InfoLine> info = this.infoLines(settings, viewer, mc);
-		int infoHeight = info.size() * 10;
-		int[] placed = place(anchor, heldSize > 0 ? heldSize : wanted, heldSize <= 0, graphics.guiWidth(), graphics.guiHeight(), infoHeight, effects);
+		float textScale = Pins.scale(settings.minimapTextScale);
+		int infoHeight = (int) Math.ceil(info.size() * 10 * textScale);
+		boolean expanded = mode != 0;
+		int[] placed = mode == 2 ? expandedBounds(graphics.guiWidth(), graphics.guiHeight(), infoHeight, settings.expandedMinimapSize)
+			: mode == 1 ? cornerBounds(graphics.guiWidth(), graphics.guiHeight(), infoHeight, settings.cornerMinimapSize, anchor, effects)
+			: place(anchor, heldSize > 0 ? heldSize : wanted, heldSize <= 0, graphics.guiWidth(), graphics.guiHeight(), infoHeight, effects);
 		int x = placed[0];
 		int y = placed[1];
 		int size = placed[2];
+		int height = expanded ? placed[3] : size;
 		int wantedLayer = settings.autoCaves && ServerRules.caveMapsAllowed() ? session.autoLayer(viewer) : TileKey.SURFACE;
-		int layer = this.layerToShow(session.map(), new MapViewport.View(x, y, size, size, Projection.u(pos.x, pos.z), Projection.v(pos.x, pos.y, pos.z), zoom(session.map(), wantedLayer), wantedLayer));
-		boolean round = settings.minimapShape == Settings.Shape.ROUND;
+		int layer = this.layerToShow(session.map(), new MapViewport.View(x, y, size, height, Projection.u(pos.x, pos.z), Projection.v(pos.x, pos.y, pos.z), zoom(session.map(), wantedLayer), wantedLayer));
+		boolean round = !expanded && settings.minimapShape == Settings.Shape.ROUND;
 		float opacity = settings.opacity();
 		float fadeIn = this.fadeStart < 0 ? 1 : (System.currentTimeMillis() - this.fadeStart) / (float) LAYER_FADE_MS;
 		if (fadeIn < 1) {
 			// So the two layers together stay as opaque as the minimap is set.
 			this.fading.opacity(opacity * (1 - fadeIn) / (1 - opacity * fadeIn));
-			this.fading.draw(graphics, session.map(), new MapViewport.View(x, y, size, size, Projection.u(pos.x, pos.z), Projection.v(pos.x, pos.y, pos.z), zoom(session.map(), this.fadingLayer), this.fadingLayer, round, true), 0, false, null);
+			this.fading.draw(graphics, session.map(), new MapViewport.View(x, y, size, height, Projection.u(pos.x, pos.z), Projection.v(pos.x, pos.y, pos.z), zoom(session.map(), this.fadingLayer), this.fadingLayer, round, true), 0, false, null);
 		} else {
 			this.fadeStart = -1;
 		}
 		float shownOpacity = opacity * Math.min(1, fadeIn);
 		this.viewport.opacity(shownOpacity);
 
-		MapViewport.View view = new MapViewport.View(x, y, size, size, Projection.u(pos.x, pos.z), Projection.v(pos.x, pos.y, pos.z), zoom(session.map(), layer), layer, round, true);
+		MapViewport.View view = new MapViewport.View(x, y, size, height, Projection.u(pos.x, pos.z), Projection.v(pos.x, pos.y, pos.z), zoom(session.map(), layer), layer, round, true);
 		this.viewport.draw(graphics, session.map(), view, 0, Settings.get().claims == Settings.ClaimsShown.ALWAYS,
 			() -> session.lights().draw(graphics, view, partialTick, shownOpacity, ServerRules.radarAllowed() && settings.radarOnMinimap));
 		session.crafts().draw(graphics, view, partialTick, opacity);
@@ -246,7 +258,11 @@ public final class MinimapHud implements HudElement {
 			this.drawings.draw(graphics, font, view, drawings.in(mc.level.dimension().identifier().toString()), null, null, false);
 		}
 		// Over the map, since a resource pack's frame can reach in over its edge, and under what's marked on it.
-		MinimapFrames.draw(graphics, settings.minimapFrame, round, x, y, size);
+		if (expanded) {
+			expandedFrame(graphics, settings.minimapFrame, x, y, size, height);
+		} else {
+			MinimapFrames.draw(graphics, settings.minimapFrame, round, x, y, size);
+		}
 		List<Radar.Blip> blips = ServerRules.radarAllowed() && settings.radarOnMinimap ? Radar.collect(view, partialTick, false) : List.of();
 		Radar.draw(graphics, view, blips, false, false);
 		WaypointStore store = WaypointStore.get();
@@ -255,22 +271,61 @@ public final class MinimapHud implements HudElement {
 			WaypointOverlay.draw(graphics, view, WaypointOverlay.layout(view, near, false), false, null);
 		}
 		Radar.draw(graphics, view, blips, false, true);
-		Markers.player(graphics, x + size / 2.0F, y + size / 2.0F, Markers.onMap(viewer.getViewYRot(partialTick)), 5);
+		Markers.player(graphics, x + size / 2.0F, y + height / 2.0F, Markers.onMap(viewer.getViewYRot(partialTick)), 5);
 		if (settings.compass) {
-			this.compass(graphics, font, x, y, size);
+			this.compass(graphics, font, x, y, size, height);
 		}
-		int textY = y + size + 4;
+		float textY = y + height + 4;
 		int left = x - 2;
 		int textRight = x + size + 2;
 		for (InfoLine line : info) {
 			int w = font.width(line.text());
-			int tx = anchor.centered() ? x + (size - w) / 2 : anchor.right() ? x + size - w : x;
-			graphics.text(font, line.text(), tx, textY, line.color(), true);
-			left = Math.min(left, tx - 1);
-			textRight = Math.max(textRight, tx + w + 1);
-			textY += 10;
+			float tx = expanded || anchor.centered() ? x + (size - w * textScale) / 2 : anchor.right() ? x + size - w * textScale : x;
+			if (mode == 1) {
+				tx = Math.max(2, Math.min(tx, graphics.guiWidth() - w * textScale - 2));
+			}
+			graphics.pose().pushMatrix();
+			try {
+				graphics.pose().translate(tx, textY);
+				graphics.pose().scale(textScale);
+				graphics.text(font, line.text(), 0, 0, line.color(), true);
+			} finally {
+				graphics.pose().popMatrix();
+			}
+			left = Math.min(left, (int) Math.floor(tx - textScale));
+			textRight = Math.max(textRight, (int) Math.ceil(tx + (w + 1) * textScale));
+			textY += 10 * textScale;
 		}
-		return new int[] {left, y - 2, textRight, info.isEmpty() ? y + size + 2 : textY, x, y, size, size + infoHeight};
+		return new int[] {left, y - 2, textRight, info.isEmpty() ? y + height + 2 : y + height + 4 + infoHeight, x, y, size, height + infoHeight};
+	}
+
+	/** A centered rectangle, reserving the footer before applying the chosen screen percentage. */
+	private static int[] expandedBounds(int width, int height, int infoHeight, int percent) {
+		int w = Math.max(1, (width - 2 * MARGIN) * percent / 100);
+		int h = Math.max(1, (height - 2 * MARGIN - 4 - infoHeight) * percent / 100);
+		return new int[] {(width - w) / 2, (height - h - 4 - infoHeight) / 2, w, h};
+	}
+
+	/** The corner rectangle starts at thirty percent of each screen dimension and grows inwards. */
+	private static int[] cornerBounds(int width, int height, int infoHeight, int percent, Anchor anchor, int[] effects) {
+		int w = Math.max(1, Math.min(width - 2 * MARGIN, width * 3 * percent / 1000));
+		int effectOffset = anchor.top() && anchor.right() ? effects[1] > 0 ? 2 * EFFECT_ROW : effects[0] > 0 ? EFFECT_ROW : 0 : 0;
+		int top = MARGIN + effectOffset;
+		int h = Math.max(1, Math.min(height - top - MARGIN - 4 - infoHeight, height * 3 * percent / 1000));
+		int x = anchor.right() ? width - MARGIN - w : MARGIN;
+		int y = anchor.top() ? top : height - MARGIN - 4 - infoHeight - h;
+		return new int[] {x, y, w, h};
+	}
+
+	private static void expandedFrame(GuiGraphicsExtractor graphics, Settings.Frame frame, int x, int y, int width, int height) {
+		if (frame == Settings.Frame.NONE) {
+			return;
+		}
+		int color = 0xDD101418;
+		graphics.fill(x - 2, y - 2, x + width + 2, y, color);
+		graphics.fill(x - 2, y + height, x + width + 2, y + height + 2, color);
+		graphics.fill(x - 2, y, x, y + height, color);
+		graphics.fill(x + width, y, x + width + 2, y + height, color);
 	}
 
 	/**
@@ -365,9 +420,13 @@ public final class MinimapHud implements HudElement {
 
 	/** Letters on the frame. The map always faces north, so they never move. */
 	private void compass(GuiGraphicsExtractor graphics, Font font, int x, int y, int size) {
+		this.compass(graphics, font, x, y, size, size);
+	}
+
+	private void compass(GuiGraphicsExtractor graphics, Font font, int x, int y, int width, int height) {
 		// The letters by which way the map faces: top, right, bottom, left.
 		int turns = Projection.facing().turns;
-		int[][] at = {{x + size / 2, y + 1}, {x + size - 5, y + size / 2 - 4}, {x + size / 2, y + size - 9}, {x + 5, y + size / 2 - 4}};
+		int[][] at = {{x + width / 2, y + 1}, {x + width - 5, y + height / 2 - 4}, {x + width / 2, y + height - 9}, {x + 5, y + height / 2 - 4}};
 		String[] letters = {"N", "E", "S", "W"};
 		for (int i = 0; i < 4; i++) {
 			int[] place = at[Math.floorMod(i - turns, 4)];

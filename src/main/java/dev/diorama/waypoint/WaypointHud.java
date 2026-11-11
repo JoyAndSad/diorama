@@ -51,6 +51,7 @@ public final class WaypointHud implements HudElement {
 		Font font = mc.font;
 		List<Waypoint> waypoints = store.shownIn(mc.level.dimension().identifier().toString());
 		float scale = Pins.scale(Settings.get().waypointWorldSize);
+		float textScale = Pins.scale(Settings.get().waypointWorldTextSize);
 		// A pin stands above its spot, so a big one is still on screen with its spot well off it.
 		float margin = 28 * Math.max(1, scale);
 		for (Waypoint waypoint : waypoints) {
@@ -86,7 +87,10 @@ public final class WaypointHud implements HudElement {
 					text = waypoint.shownName() + " · " + text;
 				}
 				int w = font.width(text);
-				graphics.pose().translate(-w / 2.0F, 1 + Pins.SHADOW * scale);
+				// Clear the pin's shadow even when the label and pin have different sizes.
+				graphics.pose().translate(0, Pins.SHADOW * scale + textScale);
+				graphics.pose().scale(textScale);
+				graphics.pose().translate(-w / 2.0F, 0);
 				graphics.fill(-2, -1, w + 2, 9, 0x80000000);
 				graphics.text(font, text, 0, 0, 0xFFFFFFFF, false);
 			} finally {

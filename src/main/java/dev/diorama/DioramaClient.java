@@ -40,26 +40,45 @@ public final class DioramaClient {
 	public static final KeyMapping ZOOM_OUT = new KeyMapping("key.diorama.zoom_out", InputConstants.KEY_MINUS, CATEGORY);
 	public static final KeyMapping SETTINGS = new KeyMapping("key.diorama.settings", InputConstants.UNKNOWN.getValue(), CATEGORY);
 	public static final KeyMapping TOGGLE_MINIMAP = new KeyMapping("key.diorama.toggle_minimap", InputConstants.UNKNOWN.getValue(), CATEGORY);
-	/**
-	 * Held, the minimap shows at its enlarged size; with {@link Settings#minimapEnlargeToggle}, each press
-	 * switches it. Unbound to start with: zoom mods and others claim the free letters.
-	 */
-	public static final KeyMapping ENLARGE_MINIMAP = new KeyMapping("key.diorama.enlarge_minimap", InputConstants.UNKNOWN.getValue(), CATEGORY);
+	/** Toggles the expanded corner minimap; it can be rebound in Minecraft's Controls. */
+	public static final KeyMapping ENLARGE_MINIMAP = new KeyMapping("key.diorama.expanded_minimap", InputConstants.KEY_BACKSLASH, CATEGORY);
+	/** Shows the large centered HUD map only while held, regardless of Caps Lock's OS lock state. */
+	public static final KeyMapping LARGE_MAP = new KeyMapping("key.diorama.large_map", InputConstants.KEY_CAPSLOCK, CATEGORY);
 	/** Works on the map, as its dimension button does; unbound, like Xaero's World Map's. */
 	public static final KeyMapping TOGGLE_DIMENSION = new KeyMapping("key.diorama.toggle_dimension", InputConstants.UNKNOWN.getValue(), CATEGORY);
 	/** Every key binding, for the loader to register. */
-	public static final List<KeyMapping> KEY_MAPPINGS = List.of(OPEN_MAP, NEW_WAYPOINT, WAYPOINT_LIST, ZOOM_IN, ZOOM_OUT, SETTINGS, TOGGLE_MINIMAP, ENLARGE_MINIMAP, TOGGLE_DIMENSION);
+	public static final List<KeyMapping> KEY_MAPPINGS = List.of(OPEN_MAP, NEW_WAYPOINT, WAYPOINT_LIST, ZOOM_IN, ZOOM_OUT, SETTINGS, TOGGLE_MINIMAP, ENLARGE_MINIMAP, LARGE_MAP, TOGGLE_DIMENSION);
 
-	/** Switched by the enlarge key while {@link Settings#minimapEnlargeToggle} is on; off outside a world, as Xaero's, or with the setting off. */
-	private static boolean enlargeToggled;
-	private static boolean enlargeWasDown;
+	private static boolean expandedToggled;
+	private static boolean expandedWasDown;
 
 	private DioramaClient() {
 	}
 
-	/** Whether the minimap shows at its enlarged size: the enlarge key held, or switched on. */
+	/** Whether the expanded corner minimap is switched on. */
 	public static boolean minimapEnlarged() {
-		return Settings.get().minimapEnlargeToggle ? enlargeToggled : ENLARGE_MINIMAP.isDown();
+		return expandedToggled;
+	}
+
+	/** Physical key state, with the large map hidden while a screen is open or outside a world. */
+	public static boolean largeMapHeld() {
+		Minecraft mc = Minecraft.getInstance();
+		return LARGE_MAP.isDown() && mc.level != null && mc.gui.screen() == null;
+	}
+
+	private static void tickExpandedMinimap(Minecraft mc) {
+		boolean pressed = false;
+		while (ENLARGE_MINIMAP.consumeClick()) {
+			pressed = true;
+		}
+		boolean down = ENLARGE_MINIMAP.isDown();
+		if (mc.level == null) {
+			expandedToggled = false;
+		}
+		if (mc.level != null && mc.gui.screen() == null && pressed && !expandedWasDown) {
+			expandedToggled = !expandedToggled;
+		}
+		expandedWasDown = down;
 	}
 
 	private static void changeZoom(int step) {
@@ -87,6 +106,7 @@ public final class DioramaClient {
 
 	/** Called at the end of every client tick. */
 	public static void tick(Minecraft mc) {
+		tickExpandedMinimap(mc);
 		// On the first tick every mod is set up, Waystones and its event library included.
 		Waystones.start();
 		MapSession.tick(mc);
@@ -120,19 +140,6 @@ public final class DioramaClient {
 			Settings s = Settings.get();
 			s.minimap = !s.minimap;
 			s.save();
-		}
-		// Presses are taken with the setting off too, so ones made while holding don't count once it goes on.
-		// Held past the key repeat delay the key keeps clicking: only a press that starts it counts.
-		boolean pressed = false;
-		while (ENLARGE_MINIMAP.consumeClick()) {
-			pressed = true;
-		}
-		if (pressed && !enlargeWasDown) {
-			enlargeToggled = !enlargeToggled;
-		}
-		enlargeWasDown = ENLARGE_MINIMAP.isDown();
-		if (mc.level == null || !Settings.get().minimapEnlargeToggle) {
-			enlargeToggled = false;
 		}
 		while (WAYPOINT_LIST.consumeClick()) {
 			if (mc.gui.screen() == null && mc.level != null) {

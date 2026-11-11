@@ -149,6 +149,7 @@ public final class Radar {
 		IconBatch icons = players ? IconBatch.direct(graphics) : IconBatch.batched(graphics);
 		Settings settings = Settings.get();
 		boolean names = settings.playerNames == Settings.NameTags.ALWAYS || settings.playerNames == Settings.NameTags.FULLSCREEN && fullscreen;
+		float arrowScale = fullscreen ? 1 : settings.minimapHeightArrowScale == 0 ? 0 : Pins.scale(settings.minimapHeightArrowScale);
 		// A round view can't cut icons to its circle, so it shows only those wholly inside it, as drawn:
 		// pixel heads use whole screen pixels per texel and can come out bigger than their size.
 		Circle circle = view.round() ? Circle.in(view) : null;
@@ -163,12 +164,12 @@ public final class Radar {
 			int alpha = alphaFor(blip.dy());
 			if (measure != null) {
 				measure.clear();
-				icon(measure, blip, alpha, settings);
+				icon(measure, blip, alpha, settings, arrowScale);
 				if (!measure.inside(circle)) {
 					continue;
 				}
 			}
-			icon(icons, blip, alpha, settings);
+			icon(icons, blip, alpha, settings, arrowScale);
 			if (names && blip.kind() == Kind.PLAYER) {
 				nameTag(graphics, blip, alpha);
 			}
@@ -212,24 +213,41 @@ public final class Radar {
 	}
 
 	/** One blip's icon in the radar style, with a caret if it's well above or below. */
-	private static void icon(IconBatch icons, Blip blip, int alpha, Settings settings) {
+	private static void icon(IconBatch icons, Blip blip, int alpha, Settings settings, float arrowScale) {
 		switch (settings.radarStyle) {
 			case FRAMED -> framed(icons, blip, alpha);
 			case DOTS -> dot(icons, blip, alpha);
 			default -> pixelHead(icons, blip, alpha, settings.radarTypeOutline);
 		}
-		if (Math.abs(blip.dy()) > CARET_HEIGHT) {
+		if (arrowScale > 0 && Math.abs(blip.dy()) > CARET_HEIGHT) {
 			boolean below = blip.dy() < 0;
 			float s = blip.size();
 			if (settings.radarStyle == Settings.RadarStyle.FRAMED) {
 				float caret = Math.max(4, s * 0.7F);
-				float cx = blip.x() + s * 0.55F + caret * 0.3F;
+				float cx = blip.x() + s * 0.55F + caret * 0.3F * arrowScale;
 				float cy = blip.y() - s * 0.45F;
-				MapIcons.caret(icons, cx, cy, caret + 2, withAlpha(0xE0101418, alpha), below);
-				MapIcons.caret(icons, cx, cy, caret, withAlpha(0xFFFFFFFF, alpha), below);
+				MapIcons.caret(icons, cx, cy, (caret + 2) * arrowScale, withAlpha(0xE0101418, alpha), below);
+				MapIcons.caret(icons, cx, cy, caret * arrowScale, withAlpha(0xFFFFFFFF, alpha), below);
 			} else {
-				pixelCaret(icons, blip.x() + s * 0.7F + 1, blip.y() - s * 0.5F, below, alpha);
+				scaledPixelCaret(icons, blip.x() + s * 0.7F + arrowScale, blip.y() - s * 0.5F, below, alpha, arrowScale);
 			}
+		}
+	}
+
+	/** Scales just the height arrow, in the same pose for drawing and round-map measurement. */
+	private static void scaledPixelCaret(IconBatch icons, float cx, float cy, boolean down, int alpha, float scale) {
+		if (scale == 1) {
+			pixelCaret(icons, cx, cy, down, alpha);
+			return;
+		}
+		GuiGraphicsExtractor graphics = icons.graphics();
+		graphics.pose().pushMatrix();
+		try {
+			graphics.pose().translate(cx, cy);
+			graphics.pose().scale(scale);
+			pixelCaret(icons, 0, 0, down, alpha);
+		} finally {
+			graphics.pose().popMatrix();
 		}
 	}
 
