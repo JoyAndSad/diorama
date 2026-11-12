@@ -114,14 +114,15 @@ public final class DioramaClient {
 		Waypoints.watchDeaths(mc);
 		Claims.tick(mc);
 		XaeroNotice.tick(mc);
+		dev.diorama.web.ClientWebMap.tick(mc);
 		while (OPEN_MAP.consumeClick()) {
-			if (mc.gui.screen() == null && mc.level != null && ServerRules.minimapAllowed()) {
+			if (mc.gui.screen() == null && mc.level != null && !ServerRules.sayMapOffHere(mc) && ServerRules.minimapAllowed()) {
 				mc.gui.setScreen(new MapScreen());
 			}
 		}
 		while (NEW_WAYPOINT.consumeClick()) {
 			Waypoint waypoint = Waypoints.atPlayer();
-			if (mc.gui.screen() == null && waypoint != null) {
+			if (mc.gui.screen() == null && waypoint != null && !ServerRules.sayMapOffHere(mc)) {
 				mc.gui.setScreen(new WaypointEditScreen(null, waypoint, true));
 			}
 		}
@@ -142,7 +143,7 @@ public final class DioramaClient {
 			s.save();
 		}
 		while (WAYPOINT_LIST.consumeClick()) {
-			if (mc.gui.screen() == null && mc.level != null) {
+			if (mc.gui.screen() == null && mc.level != null && !ServerRules.sayMapOffHere(mc)) {
 				mc.gui.setScreen(new WaypointListScreen(null));
 			}
 		}

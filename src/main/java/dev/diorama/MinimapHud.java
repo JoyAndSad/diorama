@@ -6,11 +6,11 @@ import dev.diorama.render.Circle;
 import dev.diorama.render.MapLevel;
 import dev.diorama.render.MapViewport;
 import dev.diorama.render.MinimapFrames;
-import dev.diorama.render.Pins;
 import dev.diorama.drawing.DrawingOverlay;
 import dev.diorama.drawing.DrawingStore;
 import dev.diorama.render.Markers;
 import dev.diorama.render.Radar;
+import dev.diorama.render.TextSize;
 import dev.diorama.render.gpu.MapCanvas;
 import dev.diorama.waypoint.Waypoint;
 import dev.diorama.waypoint.WaypointOverlay;
@@ -75,6 +75,7 @@ public final class MinimapHud implements HudElement {
 	private int fadingLayer;
 	private long fadeStart = -1;
 	private final DrawingOverlay drawings = new DrawingOverlay();
+	private final WorldBorderOverlay worldBorder = new WorldBorderOverlay();
 	/** The slice on screen. Moving into another slice keeps this one until the next has baked. */
 	private int shownLayer;
 	private boolean showing;
@@ -117,7 +118,7 @@ public final class MinimapHud implements HudElement {
 		}
 		// The enlarge key shows it bigger, growing away from the edges it's placed by.
 		int size = settings.minimapSize;
-		int mode = DioramaClient.largeMapHeld() ? 2 : DioramaClient.minimapEnlarged() ? 1 : 0;
+		int mode = placing ? 0 : DioramaClient.largeMapHeld() ? 2 : DioramaClient.minimapEnlarged() ? 1 : 0;
 		int[] bounds = this.draw(graphics, partialTick, Anchor.of(settings), effectIcons ? effectCounts(mc.player) : NO_EFFECTS, size, mode);
 		shown = new int[] {bounds[4], bounds[5], bounds[6], bounds[7]};
 	}
@@ -224,7 +225,7 @@ public final class MinimapHud implements HudElement {
 		Vec3 pos = viewer.getPosition(partialTick);
 		Font font = mc.font;
 		List<InfoLine> info = this.infoLines(settings, viewer, mc);
-		float textScale = Pins.scale(settings.minimapTextScale);
+		float textScale = TextSize.scale(settings.minimapTextScale);
 		int infoHeight = (int) Math.ceil(info.size() * 10 * textScale);
 		boolean expanded = mode != 0;
 		int[] placed = mode == 2 ? expandedBounds(graphics.guiWidth(), graphics.guiHeight(), infoHeight, settings.expandedMinimapSize)
@@ -253,6 +254,9 @@ public final class MinimapHud implements HudElement {
 		this.viewport.draw(graphics, session.map(), view, 0, Settings.get().claims == Settings.ClaimsShown.ALWAYS,
 			() -> session.lights().draw(graphics, view, partialTick, shownOpacity, ServerRules.radarAllowed() && settings.radarOnMinimap));
 		session.crafts().draw(graphics, view, partialTick, opacity);
+		if (settings.worldBorder == Settings.WorldBorderShown.ALWAYS) {
+			this.worldBorder.draw(graphics, font, view, mc.level, viewer);
+		}
 		DrawingStore drawings = DrawingStore.get();
 		if (drawings != null && settings.drawings == Settings.DrawingsShown.ALWAYS) {
 			this.drawings.draw(graphics, font, view, drawings.in(mc.level.dimension().identifier().toString()), null, null, false);
@@ -273,17 +277,15 @@ public final class MinimapHud implements HudElement {
 		Radar.draw(graphics, view, blips, false, true);
 		Markers.player(graphics, x + size / 2.0F, y + height / 2.0F, Markers.onMap(viewer.getViewYRot(partialTick)), 5);
 		if (settings.compass) {
-			this.compass(graphics, font, x, y, size, height);
+			this.compass(graphics, font, x, y, size, height, TextSize.scale(settings.minimapTextSize));
 		}
 		float textY = y + height + 4;
-		int left = x - 2;
-		int textRight = x + size + 2;
+		float left = x - 2;
+		float textRight = x + size + 2;
 		for (InfoLine line : info) {
-			int w = font.width(line.text());
-			float tx = expanded || anchor.centered() ? x + (size - w * textScale) / 2 : anchor.right() ? x + size - w * textScale : x;
-			if (mode == 1) {
-				tx = Math.max(2, Math.min(tx, graphics.guiWidth() - w * textScale - 2));
-			}
+			float w = font.width(line.text()) * textScale;
+			float tx = expanded || anchor.centered() ? x + (float) Math.floor((size - w) / 2) : anchor.right() ? x + size - w : x;
+			tx = TextSize.snap(Math.max(1, Math.min(tx, graphics.guiWidth() - 1 - w)));
 			graphics.pose().pushMatrix();
 			try {
 				graphics.pose().translate(tx, textY);
@@ -292,11 +294,11 @@ public final class MinimapHud implements HudElement {
 			} finally {
 				graphics.pose().popMatrix();
 			}
-			left = Math.min(left, (int) Math.floor(tx - textScale));
-			textRight = Math.max(textRight, (int) Math.ceil(tx + (w + 1) * textScale));
+			left = Math.min(left, tx - 1);
+			textRight = Math.max(textRight, tx + w + 1);
 			textY += 10 * textScale;
 		}
-		return new int[] {left, y - 2, textRight, info.isEmpty() ? y + height + 2 : y + height + 4 + infoHeight, x, y, size, height + infoHeight};
+		return new int[] {(int) Math.floor(left), y - 2, (int) Math.ceil(textRight), info.isEmpty() ? y + height + 2 : y + height + 4 + infoHeight, x, y, size, height + infoHeight};
 	}
 
 	/** A centered rectangle, reserving the footer before applying the chosen screen percentage. */
@@ -418,26 +420,42 @@ public final class MinimapHud implements HudElement {
 		return Math.max(MARGIN, Math.min(x, width - MARGIN - size));
 	}
 
-	/** Letters on the frame. The map always faces north, so they never move. */
-	private void compass(GuiGraphicsExtractor graphics, Font font, int x, int y, int size) {
-		this.compass(graphics, font, x, y, size, size);
-	}
-
-	private void compass(GuiGraphicsExtractor graphics, Font font, int x, int y, int width, int height) {
-		// The letters by which way the map faces: top, right, bottom, left.
-		int turns = Projection.facing().turns;
-		int[][] at = {{x + width / 2, y + 1}, {x + width - 5, y + height / 2 - 4}, {x + width / 2, y + height - 9}, {x + 5, y + height / 2 - 4}};
+	/** Letters on the frame, by which way the map faces. At another text size each grows in from its edge. */
+	private void compass(GuiGraphicsExtractor graphics, Font font, int x, int y, int width, int height, float text) {
 		String[] letters = {"N", "E", "S", "W"};
+		int turns = Projection.facing().turns;
 		for (int i = 0; i < 4; i++) {
-			int[] place = at[Math.floorMod(i - turns, 4)];
-			this.letter(graphics, font, letters[i], place[0], place[1], i == 0 ? 0xFFFF6B6B : 0xFFFFFFFF);
+			// The letter's box at the game's text size: a pixel around the letter, two on its left.
+			int w = font.width(letters[i]) + 3;
+			int h = 9;
+			// Which edge it sits on: top, right, bottom, left. The box stays against it, centred along it.
+			float bx;
+			float by;
+			switch (Math.floorMod(i - turns, 4)) {
+				case 0 -> {
+					bx = x + width / 2 - (w - 3) / 2 - 2 + w / 2.0F - w * text / 2;
+					by = y;
+				}
+				case 1 -> {
+					bx = x + width - 5 - (w - 3) / 2 - 2 + w - w * text;
+					by = y + height / 2 - 5 + h / 2.0F - h * text / 2;
+				}
+				case 2 -> {
+					bx = x + width / 2 - (w - 3) / 2 - 2 + w / 2.0F - w * text / 2;
+					by = y + height - 10 + h - h * text;
+				}
+				default -> {
+					bx = x + 5 - (w - 3) / 2 - 2;
+					by = y + height / 2 - 5 + h / 2.0F - h * text / 2;
+				}
+			}
+			graphics.pose().pushMatrix();
+			graphics.pose().translate(TextSize.snap(bx), TextSize.snap(by));
+			graphics.pose().scale(text);
+			graphics.fill(0, 0, w, h, 0xA0101418);
+			graphics.text(font, letters[i], 2, 1, i == 0 ? 0xFFFF6B6B : 0xFFFFFFFF, false);
+			graphics.pose().popMatrix();
 		}
-	}
-
-	private void letter(GuiGraphicsExtractor graphics, Font font, String letter, int cx, int y, int color) {
-		int w = font.width(letter);
-		graphics.fill(cx - w / 2 - 2, y - 1, cx - w / 2 + w + 1, y + 8, 0xA0101418);
-		graphics.text(font, letter, cx - w / 2, y, color, false);
 	}
 
 	private List<InfoLine> infoLines(Settings settings, Entity viewer, Minecraft mc) {

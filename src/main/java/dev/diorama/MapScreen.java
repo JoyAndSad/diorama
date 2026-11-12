@@ -72,8 +72,13 @@ import com.mojang.blaze3d.platform.InputConstants;
 public final class MapScreen extends Screen {
 	/** How many Overworld blocks a block of the Nether stands for. */
 	private static final double NETHER_SCALE = 8;
-	/** How far out the saved surface map zooms; overview tiles make it cheap. */
-	private static final double MIN_ZOOM = 0.04;
+	/**
+	 * How far out the saved surface map zooms, in screen pixels per block: 512 blocks to a pixel, as
+	 * Xaero's World Map with its Unlimited Fullscreen Zoom-out on. In screen pixels, not the GUI's,
+	 * so the map reaches as far at any GUI scale. Overview tiles go up to a level that draws this
+	 * with a texture pixel a screen pixel ({@link TileKey#MAX_LOD}), so it costs what any zoom does.
+	 */
+	private static final double MIN_SCREEN_ZOOM = 1.0 / 512;
 	/** How long the open map keeps the layer on screen while the one the player moved into bakes; as the minimap. */
 	private static final long FOLLOW_HOLD_MS = 3000;
 
@@ -142,6 +147,7 @@ public final class MapScreen extends Screen {
 	/** Turns draw mode on and off; it sits above the zoom buttons. */
 	private Button drawButton;
 	private final DrawMode draw = new DrawMode();
+	private final WorldBorderOverlay worldBorder = new WorldBorderOverlay();
 	/** The tabs' left edges and widths as drawn last frame, and where the status text starts. */
 	private final int[] tabX = new int[2];
 	private final int[] tabWidth = new int[2];
@@ -230,7 +236,7 @@ public final class MapScreen extends Screen {
 		}
 		this.export = this.addRenderableWidget(Button.builder(Component.empty(), b -> {
 			this.menu = null;
-			this.minecraft.gui.setScreen(new ExportScreen(this, this.centerU, this.centerV, this.zoom, this.width, this.height));
+			this.minecraft.gui.setScreen(new ExportScreen(this, this.centerU, this.centerV, this.zoom, this.layer, this.width, this.height));
 		}).size(20, 20).createNarration(n -> Component.translatable("diorama.export.title")).build());
 		this.zoomIn = this.addRenderableWidget(Button.builder(Component.literal("+"), b -> this.zoomButton(ZOOM_BUTTON_STEPS))
 			.size(20, 20).createNarration(n -> Component.translatable("diorama.map.zoom_in")).build());
@@ -266,8 +272,10 @@ public final class MapScreen extends Screen {
 		if (maps == null || connection == null || this.minecraft.level == null) {
 			return List.of();
 		}
+		// Not the ones with the map off: what was mapped there before stays out of sight too.
 		List<String> saved = maps.saved(this.minecraft.level.dimension().identifier().toString(),
-			connection.levels().stream().map(level -> level.identifier().toString()).toList());
+			connection.levels().stream().map(level -> level.identifier().toString()).toList())
+			.stream().filter(dimension -> !ServerRules.mapOff(dimension)).toList();
 		// The one shown stays a stop even if nothing is left in it, or there'd be no way off it.
 		if (this.otherDimension == null || saved.contains(this.otherDimension)) {
 			return saved;
@@ -314,7 +322,8 @@ public final class MapScreen extends Screen {
 		if (other == null) {
 			return session.map();
 		}
-		if (maps == null || this.minecraft.level == null || other.equals(this.minecraft.level.dimension().identifier().toString())) {
+		// Or the player turned the map off in the dimension shown, in Settings over this screen.
+		if (maps == null || this.minecraft.level == null || other.equals(this.minecraft.level.dimension().identifier().toString()) || ServerRules.mapOff(other)) {
 			this.draw.leaveDimension();
 			this.closeOtherMap();
 			this.otherDimension = null;
@@ -409,9 +418,10 @@ public final class MapScreen extends Screen {
 		int x = this.width - (caves ? 56 : 26);
 		int y = this.height - 90;
 		this.drawButton.setPosition(x, y - 26);
-		// Only the sky view is saved, so only it can be exported; not while drawing on it.
+		// The sky view is exported from what's saved, a cave slice from the chunks the map holds; not
+		// while drawing on it.
 		MapSession session = MapSession.get();
-		this.export.visible = !caves && !this.draw.active() && this.otherDimension == null && session != null && session.map().savedMap() != null;
+		this.export.visible = !this.draw.active() && this.otherDimension == null && session != null && (caves || session.map().savedMap() != null);
 		this.export.setPosition(x, y - 48);
 		this.zoomIn.setPosition(x, y);
 		this.zoomOut.setPosition(x, y + 22);
@@ -483,6 +493,10 @@ public final class MapScreen extends Screen {
 			elsewhere ? null : () -> session.lights().draw(graphics, view, a, 1, ServerRules.radarAllowed() && Settings.get().radarOnMap));
 		if (!elsewhere) {
 			session.crafts().draw(graphics, view, a, 1);
+		}
+		// The client only knows the border of the dimension it's in.
+		if (!elsewhere && Settings.get().worldBorder != Settings.WorldBorderShown.OFF) {
+			this.worldBorder.draw(graphics, this.font, view, this.minecraft.level, viewer);
 		}
 		DrawingStore drawings = DrawingStore.get();
 		if (drawings != null && (this.draw.active() || Settings.get().drawings != Settings.DrawingsShown.OFF)) {
@@ -1754,7 +1768,12 @@ public final class MapScreen extends Screen {
 	private double minZoom(int layer) {
 		MapSession session = MapSession.get();
 		boolean overviews = layer == TileKey.SURFACE && session != null && (this.otherDimension != null || session.map().hasOverviews());
-		return overviews ? MIN_ZOOM : MapViewport.DETAILED_ZOOM;
+		return overviews ? MIN_SCREEN_ZOOM / net.minecraft.client.Minecraft.getInstance().getWindow().getGuiScale() : MapViewport.DETAILED_ZOOM;
+	}
+
+	/** For tests: the zoom the map last drew at, in GUI pixels per block. */
+	public double zoom() {
+		return this.zoom;
 	}
 
 	/** For tests: put the view at a spot without following the player. */

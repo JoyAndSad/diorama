@@ -1,6 +1,7 @@
 package dev.diorama;
 
 import dev.diorama.render.Pins;
+import dev.diorama.render.TextSize;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -91,13 +92,16 @@ public final class SettingsScreen extends Screen {
 		int sizes = (Settings.MAX_SIZE - Settings.MIN_SIZE) / Settings.SIZE_STEP + 1;
 		minimap.slider("size", (s.minimapSize - Settings.MIN_SIZE) / Settings.SIZE_STEP, sizes,
 			i -> s.minimapSize = Settings.MIN_SIZE + i * Settings.SIZE_STEP, i -> Component.literal(Integer.toString(Settings.MIN_SIZE + i * Settings.SIZE_STEP)));
+		int[] textSizes = TextSize.sizes();
+		minimap.slider("text_size", nearestIndex(textSizes, s.minimapTextSize), textSizes.length,
+			i -> s.minimapTextSize = textSizes[i], i -> Component.literal(textSizes[i] + "%"));
+		minimap.lastTwoSideBySide();
 		minimap.slider("zoom", s.zoomStep(), Settings.ZOOMS.length, s::zoomStep, i -> Component.literal(Settings.ZOOMS[i] + "×"));
 		int opacities = (Settings.MAX_OPACITY - Settings.MIN_OPACITY) / Settings.OPACITY_STEP + 1;
 		minimap.slider("opacity", (Settings.snapOpacity(s.minimapOpacity) - Settings.MIN_OPACITY) / Settings.OPACITY_STEP, opacities,
 			i -> s.minimapOpacity = Settings.MIN_OPACITY + i * Settings.OPACITY_STEP, i -> Component.literal((Settings.MIN_OPACITY + i * Settings.OPACITY_STEP) + "%"));
 		// Beside Zoom, leaving room for the paired text and height-arrow controls.
 		minimap.lastTwoSideBySide();
-		int[] textSizes = Pins.sizes();
 		minimap.slider("minimap_text_scale", nearestIndex(textSizes, s.minimapTextScale), textSizes.length,
 			i -> s.minimapTextScale = textSizes[i], i -> Component.literal(textSizes[i] + "%"));
 		int[] arrowSizes = heightArrowSizes();
@@ -150,6 +154,10 @@ public final class SettingsScreen extends Screen {
 			overlays.choice("claims", Settings.ClaimsShown.values(), () -> s.claims, v -> s.claims = v);
 		}
 		overlays.choice("drawings", Settings.DrawingsShown.values(), () -> s.drawings, v -> s.drawings = v);
+		// The map in a browser; beside Drawings, so the tab doesn't grow.
+		overlays.choice("web_map", Settings.WebMap.values(), () -> s.webMap, v -> s.webMap = v);
+		overlays.lastTwoSideBySide();
+		overlays.choice("world_border", Settings.WorldBorderShown.values(), () -> s.worldBorder, v -> s.worldBorder = v);
 
 		SettingsTab waypoints = new SettingsTab("diorama.settings.waypoints");
 		waypoints.toggle("waypoints_map", () -> s.waypointsOnMap, v -> s.waypointsOnMap = v);
@@ -163,6 +171,9 @@ public final class SettingsScreen extends Screen {
 		int[] distances = Settings.WAYPOINT_DISTANCES;
 		waypoints.slider("waypoint_distance", indexOf(distances, s.waypointDistance), distances.length, i -> s.waypointDistance = distances[i],
 			i -> distances[i] == 0 ? Component.translatable("diorama.settings.waypoint_distance.any") : Component.literal(distances[i] + " m"));
+		// Beside the distance, which decides how far off a beam shows too; and the tab has no room for another row.
+		waypoints.choice("waypoint_beams", Settings.Beams.values(), () -> s.waypointBeams, v -> s.waypointBeams = v);
+		waypoints.lastTwoSideBySide();
 		int[] pinSizes = Pins.sizes();
 		waypoints.heading("waypoint_size");
 		waypoints.slider("waypoint_size_minimap", nearestIndex(pinSizes, s.waypointMinimapSize), pinSizes.length, i -> s.waypointMinimapSize = pinSizes[i], i -> Component.literal(pinSizes[i] + "%"));
@@ -179,6 +190,7 @@ public final class SettingsScreen extends Screen {
 		look.toggle("rounded_fog", () -> s.roundedFog, v -> s.roundedFog = v);
 		look.toggle("fog_of_war", () -> s.alwaysFogOfWar, v -> s.alwaysFogOfWar = v, ServerRules.fogOfWarForced() ? true : null);
 		look.toggle("saved_chunks", () -> s.mapSavedChunks, v -> s.mapSavedChunks = v);
+		look.open("map_off", DimensionsScreen.summary(), () -> this.minecraft.gui.setScreen(new DimensionsScreen(this)));
 		Settings.Quality[] qualities = Settings.Quality.values();
 		look.cycle("quality", () -> s.quality.ordinal(), qualities.length, i -> s.quality = qualities[i],
 			i -> Component.translatable("diorama.settings.quality." + qualities[i].name().toLowerCase(Locale.ROOT)));
@@ -259,6 +271,9 @@ public final class SettingsScreen extends Screen {
 		private final java.util.Set<AbstractWidget> headings = new java.util.HashSet<>();
 		/** Whether the tab says which of its settings the server sets. */
 		private boolean serverNoted;
+		private @Nullable ScreenRectangle layoutArea;
+		private int scroll;
+		private int maxScroll;
 
 		SettingsTab(String key) {
 			super(Component.translatable(key));
@@ -275,28 +290,7 @@ public final class SettingsScreen extends Screen {
 		void toggle(String key, BooleanSupplier get, Consumer<Boolean> set, @Nullable Boolean serverSet) {
 			int column = (CONTENT - COLUMN_GAP) / 2;
 			boolean shown = serverSet != null ? serverSet : get.getAsBoolean();
-			//? if >=1.21 {
-			Checkbox checkbox = Checkbox.builder(Component.translatable("diorama.settings." + key), SettingsScreen.this.font)
-				.selected(shown)
-				.maxWidth(column)
-				.onValueChange((box, value) -> {
-					set.accept(value);
-					Settings.get().save();
-				})
-				.build();
-			//?} else {
-			/*// 1.20.1's checkbox has no builder and tells no one it changed. It's a 20 pixel box with
-			// the label 4 pixels right of it, as wide as both, and no wider than the column.
-			Component label = Component.translatable("diorama.settings." + key);
-			Checkbox checkbox = new Checkbox(0, 0, Math.min(24 + SettingsScreen.this.font.width(label), column), 20, label, shown) {
-				@Override
-				public void onPress() {
-					super.onPress();
-					set.accept(this.selected());
-					Settings.get().save();
-				}
-			};
-			*///?}
+			Checkbox checkbox = checkbox(Component.translatable("diorama.settings." + key), SettingsScreen.this.font, shown, column, set);
 			// Not through the builder: from 26.2 it keeps a tooltip only for a label too long to show.
 			checkbox.setTooltip(serverSet == null ? tooltip(key) : Tooltip.create(Component.empty().append(serverSetLine(false)).append("\n\n")
 				.append(Component.translatable("diorama.settings." + key + ".tooltip"))));
@@ -367,6 +361,7 @@ public final class SettingsScreen extends Screen {
 
 		@Override
 		public void doLayout(ScreenRectangle area) {
+			this.layoutArea = area;
 			int content = Math.min(CONTENT, area.width() - 10);
 			int column = (content - COLUMN_GAP) / 2;
 			int left = area.left() + (area.width() - content) / 2;
@@ -375,7 +370,11 @@ public final class SettingsScreen extends Screen {
 			// On a small window, closer together rather than into the buttons below.
 			boolean tight = 22 + checkRows * 22 + rows * 24 + this.headings.size() * HEADING > area.height();
 			int rowStep = tight ? 18 : 24;
-			int y = area.top() + (tight ? 6 : 12);
+			int padding = tight ? 6 : 12;
+			int checkHeight = this.checkboxes.isEmpty() ? 0 : checkRows * (tight ? 18 : 22) + (tight ? 3 : 10);
+			this.maxScroll = Math.max(0, 2 * padding + checkHeight + rows * rowStep + this.headings.size() * HEADING - area.height());
+			this.scroll = Math.min(this.scroll, this.maxScroll);
+			int y = area.top() + padding - this.scroll;
 			for (int i = 0; i < this.checkboxes.size(); i++) {
 				placeWidget(this.checkboxes.get(i), left + (i % 2) * (column + COLUMN_GAP), y + (i / 2) * (tight ? 18 : 22), tight ? 18 : 20);
 			}
@@ -411,6 +410,30 @@ public final class SettingsScreen extends Screen {
 				}
 				y += rowStep;
 			}
+			// Hidden controls cannot draw over, or take clicks from, Done and the tab bar.
+			this.visitChildren(widget -> widget.visible = widget.getY() >= area.top()
+				&& widget.getY() + widget.getHeight() <= area.top() + area.height());
+		}
+
+		boolean scrollBy(double amount) {
+			if (this.layoutArea == null || this.maxScroll == 0) {
+				return false;
+			}
+			this.scroll = Math.max(0, Math.min(this.maxScroll, this.scroll - (int) Math.round(amount * 24)));
+			this.doLayout(this.layoutArea);
+			return true;
+		}
+
+		void drawScrollbar(GuiGraphicsExtractor graphics) {
+			if (this.layoutArea == null || this.maxScroll == 0) {
+				return;
+			}
+			int top = this.layoutArea.top();
+			int height = this.layoutArea.height();
+			int thumb = Math.max(12, height * height / (height + this.maxScroll));
+			int y = top + (height - thumb) * this.scroll / this.maxScroll;
+			graphics.fill(SettingsScreen.this.side - 5, top, SettingsScreen.this.side - 2, top + height, 0x55000000);
+			graphics.fill(SettingsScreen.this.side - 5, y, SettingsScreen.this.side - 2, y + thumb, 0xFFAAAAAA);
 		}
 
 		/** Keep short-window controls inside their rows, and restore normal heights after resizing. */
@@ -457,11 +480,36 @@ public final class SettingsScreen extends Screen {
 		}
 	}
 
+	/** A checkbox no wider than {@code maxWidth} that saves the settings after telling {@code set} its new value. */
+	static Checkbox checkbox(Component label, net.minecraft.client.gui.Font font, boolean selected, int maxWidth, Consumer<Boolean> set) {
+		//? if >=1.21 {
+		return Checkbox.builder(label, font)
+			.selected(selected)
+			.maxWidth(maxWidth)
+			.onValueChange((box, value) -> {
+				set.accept(value);
+				Settings.get().save();
+			})
+			.build();
+		//?} else {
+		/*// 1.20.1's checkbox has no builder and tells no one it changed. It's a 20 pixel box with
+		// the label 4 pixels right of it, as wide as both, and no wider than the column.
+		return new Checkbox(0, 0, Math.min(24 + font.width(label), maxWidth), 20, label, selected) {
+			@Override
+			public void onPress() {
+				super.onPress();
+				set.accept(this.selected());
+				Settings.get().save();
+			}
+		};
+		*///?}
+	}
+
 	/**
 	 * Says who set a greyed-out setting: the server the player is on, or in singleplayer the file a
 	 * modpack ships, which the player can change. As the tab's {@code note} or a tooltip's first line.
 	 */
-	private static Component serverSetLine(boolean note) {
+	static Component serverSetLine(boolean note) {
 		boolean file = net.minecraft.client.Minecraft.getInstance().hasSingleplayerServer();
 		return Component.translatable("diorama.settings." + (note ? "server_note" : "server_set") + (file ? "_file" : ""))
 			.withStyle(net.minecraft.ChatFormatting.GRAY);
@@ -552,11 +600,31 @@ public final class SettingsScreen extends Screen {
 		/*this.drawBackground(graphics);
 		*///?}
 		super.extractRenderState(graphics, mouseX, mouseY, a);
+		if (this.tabManager.getCurrentTab() instanceof SettingsTab tab) {
+			tab.drawScrollbar(graphics);
+		}
 		if (this.tabBar != null) {
 			graphics.enableScissor(0, 0, this.side, TAB_BAR_HEIGHT);
 			this.tabBar.extractRenderState(graphics, mouseX, mouseY, a);
 			graphics.disableScissor();
 		}
+	}
+
+	@Override
+	//? if >=1.21 {
+	public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
+	//?} else {
+	/*public boolean mouseScrolled(double x, double y, double scrollY) {
+	*///?}
+		if (x >= 0 && x < this.side && y >= TAB_BAR_HEIGHT && y < this.listBottom()
+			&& this.tabManager.getCurrentTab() instanceof SettingsTab tab && tab.scrollBy(scrollY)) {
+			return true;
+		}
+		//? if >=1.21 {
+		return super.mouseScrolled(x, y, scrollX, scrollY);
+		//?} else {
+		/*return super.mouseScrolled(x, y, scrollY);
+		*///?}
 	}
 
 	// Ctrl+Tab and Ctrl+1 to 5 switch tabs, as in vanilla's tabbed screens, whatever has focus.
